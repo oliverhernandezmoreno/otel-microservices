@@ -1,0 +1,92 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['localhost:8888']
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  sampling:
+    policies:
+      - type: probabilistic
+        probabilistic:
+          sampling_percentage: 100
+
+  attributes:
+    actions:
+      - key: environment
+        value: production
+        action: insert
+      - key: http.method
+        pattern: ^(GET|POST|PUT|DELETE)$
+        action: keep
+
+  resource_detection:
+    detectors: [env, system, docker, gce]
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8888
+
+  logging:
+    loglevel: debug
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+connectors:
+  spanmetrics:
+    dimensions:
+      - http.method
+      - http.status_code
+      - rpc.method
+      - rpc.service
+    histogram:
+      explicit:
+        buckets: [100ms, 250ms, 500ms, 750ms, 1s, 2.5s, 5s, 7.5s, 10s]
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp, jaeger]
+      processors: [memory_limiter, batch, sampling, attributes, resource_detection]
+      exporters: [jaeger, logging, spanmetrics]
+
+    metrics:
+      receivers: [prometheus, spanmetrics]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, logging]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
